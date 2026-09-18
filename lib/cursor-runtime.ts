@@ -1,0 +1,202 @@
+import { Agent, Cursor, CursorAgentError, type SettingSource } from "@cursor/sdk";
+import {
+  createUIMessageStream,
+  createUIMessageStreamResponse,
+  type UIMessage,
+} from "ai";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { ensureWorkspace, workspaceRoot } from "@/lib/workspace";
+import { ensureSkillsDirs, personalSkillsRoot } from "@/lib/skills";
+import { skillCustomTools } from "@/lib/skill-tools";
+
+const STORE = path.join(process.cwd(), ".weave-agents.json");
+
+type AgentStore = Record<string, string>;
+
+async function loadStore(): Promise<AgentStore> {
+  try {
+    return JSON.parse(await readFile(STORE, "utf8")) as AgentStore;
+  } catch {
+    return {};
+  }
+}
+
+async function saveAgentId(sessionId: string, agentId: string) {
+  const store = await loadStore();
+  store[sessionId] = agentId;
+  await writeFile(STORE, JSON.stringify(store, null, 2), "utf8");
+}
+
+function lastUserText(messages: UIMessage[]) {
+  const user = [...messages].reverse().find((message) => message.role === "user");
+  if (!user) return "";
+  return user.parts
+    .filter((part) => part.type === "text")
+    .map((part) => ("text" in part ? part.text : ""))
+    .join("\n")
+    .trim();
+}
+
+function modelSelection(modelId?: string) {
+  return {
+    id: modelId?.trim() || process.env.CURSOR_MODEL?.trim() || "grok-4.6",
+    params: [
+      { id: "effort", value: process.env.CURSOR_MODEL_EFFORT?.trim() || "high" },
+      { id: "fast", value: process.env.CURSOR_MODEL_FAST?.trim() || "true" },
+    ],
+  };
+}
+
+export function isCursorConfigured() {
+  return Boolean(process.env.CURSOR_API_KEY?.trim());
+}
+
+export function cursorStatus() {
+  return {
+    provider: "cursor" as const,
+    model: modelSelection().id,
+    configured: isCursorConfigured(),
+  };
+}
+
+export async function streamCursorAgent(options: {
+  messages: UIMessage[];
+  sessionId?: string;
+  model?: string;
+}) {
+  const apiKey = process.env.CURSOR_API_KEY?.trim();
+  if (!apiKey) {
+    return new Response("本机还没有 Cursor API Key。", { status: 400 });
+  }
+
+  const prompt = lastUserText(options.messages);
+  if (!prompt) {
+    return new Response("没有收到用户消息。", { status: 400 });
+  }
+
+  await ensureWorkspace();
+  await ensureSkillsDirs();
+  Cursor.configure({ local: { useHttp1ForAgent: true } });
+
+  const sessionId = options.sessionId?.trim() || "default";
+  const store = await loadStore();
+  const previousId = store[sessionId];
+  const settingSources: SettingSource[] = ["project", "user"];
+  const agentOptions = {
+    apiKey,
+    model: modelSelection(options.model),
+    local: {
+      cwd: workspaceRoot(),
+      dirs: [personalSkillsRoot()],
+      settingSources,
+      customTools: skillCustomTools(),
+    },
+  };
+
+  let agent;
+  try {
+    agent = previousId
+      ? await Agent.resume(previousId, agentOptions)
+      : await Agent.create(agentOptions);
+  } catch {
+    agent = await Agent.create(agentOptions);
+  }
+
+  await saveAgentId(sessionId, agent.agentId);
+
+  const stream = createUIMessageStream({
+    originalMessages: options.messages,
+    onError: (error) =>
+      error instanceof CursorAgentError ? error.message : "Cursor Agent 运行失败",
+    execute: async ({ writer }) => {
+      writer.write({ type: "start" });
+      writer.write({ type: "start-step" });
+
+      const textId = "cursor-text";
+      let textOpen = false;
+      const reasoningId = "cursor-reasoning";
+      let reasoningOpen = false;
+      const tools = new Set<string>();
+
+      const openText = () => {
+        if (textOpen) return;
+        writer.write({ type: "text-start", id: textId });
+        textOpen = true;
+      };
+      const openReasoning = () => {
+        if (reasoningOpen) return;
+        writer.write({ type: "reasoning-start", id: reasoningId });
+        reasoningOpen = true;
+      };
+
+      try {
+        const run = await agent.send(prompt);
+        for await (const event of run.stream()) {
+          if (event.type === "assistant") {
+            for (const block of event.message.content) {
+              if (block.type === "text" && block.text) {
+                openText();
+                writer.write({ type: "text-delta", id: textId, delta: block.text });
+              }
+            }
+          }
+          if (event.type === "thinking" && event.text) {
+            openReasoning();
+            writer.write({
+              type: "reasoning-delta",
+              id: reasoningId,
+              delta: event.text,
+            });
+          }
+          if (event.type === "tool_call") {
+            if (!tools.has(event.call_id) && event.status === "running") {
+              tools.add(event.call_id);
+              writer.write({
+                type: "tool-input-available",
+                toolCallId: event.call_id,
+                toolName: event.name,
+                input: event.args ?? {},
+              });
+            }
+            if (event.status === "completed") {
+              if (!tools.has(event.call_id)) {
+                tools.add(event.call_id);
+                writer.write({
+                  type: "tool-input-available",
+                  toolCallId: event.call_id,
+                  toolName: event.name,
+                  input: event.args ?? {},
+                });
+              }
+              writer.write({
+                type: "tool-output-available",
+                toolCallId: event.call_id,
+                output: event.result ?? { ok: true },
+              });
+            }
+            if (event.status === "error") {
+              writer.write({
+                type: "tool-output-error",
+                toolCallId: event.call_id,
+                errorText: String(event.result ?? "工具调用失败"),
+              });
+            }
+          }
+        }
+        const result = await run.wait();
+        if (result.status === "error") {
+          writer.write({ type: "error", errorText: "这次任务没有完成。" });
+        }
+      } finally {
+        if (reasoningOpen) writer.write({ type: "reasoning-end", id: reasoningId });
+        if (textOpen) writer.write({ type: "text-end", id: textId });
+        writer.write({ type: "finish-step" });
+        writer.write({ type: "finish" });
+        await agent[Symbol.asyncDispose]();
+      }
+    },
+  });
+
+  return createUIMessageStreamResponse({ stream });
+}
