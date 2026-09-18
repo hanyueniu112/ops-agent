@@ -47,12 +47,12 @@ export function validatePassword(password: string) {
   return "";
 }
 
-export function createUser(username: string, passwordHash: string): AuthUser {
+export function createUser(username: string, passwordHash: string, kind: "human" | "service" = "human"): AuthUser {
   const db = getDb();
   const id = crypto.randomUUID();
   db.prepare(
-    "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
-  ).run(id, username, passwordHash, Date.now());
+    "INSERT INTO users (id, username, password_hash, created_at, kind) VALUES (?, ?, ?, ?, ?)",
+  ).run(id, username, passwordHash, Date.now(), kind);
   return { id, username };
 }
 
@@ -101,8 +101,26 @@ export function readTokenFromRequest(req: Request) {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+export function readBearerToken(req: Request) {
+  const header = req.headers.get("authorization") || "";
+  const match = header.match(/^Bearer\s+(\S+)/i);
+  return match ? match[1] : "";
+}
+
 export function userFromRequest(req: Request) {
+  const bearer = readBearerToken(req);
+  if (bearer) {
+    const fromBearer = userFromToken(bearer);
+    if (fromBearer) return fromBearer;
+  }
   return userFromToken(readTokenFromRequest(req));
+}
+
+export function findUserById(id: string): AuthUser | null {
+  const row = getDb()
+    .prepare("SELECT id, username FROM users WHERE id = ?")
+    .get(id) as { id: string; username: string } | undefined;
+  return row || null;
 }
 
 export function cookieHeader(token: string, maxAgeSeconds = TOKEN_DAYS * 24 * 60 * 60) {

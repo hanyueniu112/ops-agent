@@ -51,6 +51,10 @@ export function canAccessSession(session: { visibility: SessionVisibility; owner
   return session.visibility === "public" || session.ownerId === userId;
 }
 
+export function canWriteSession(session: { visibility: SessionVisibility; ownerId: string }, userId: string) {
+  return session.visibility === "public" || session.ownerId === userId;
+}
+
 export function listVisibleSessions(userId: string): StoredSession[] {
   const rows = getDb()
     .prepare(
@@ -125,6 +129,15 @@ export function updateStoredSession(
     )
     .run(title, visibility, JSON.stringify(messages), now, id);
   return getStoredSession(id);
+}
+
+export function appendStoredMessages(id: string, extra: UIMessage[], title?: string) {
+  const current = getStoredSession(id);
+  if (!current) return null;
+  return updateStoredSession(id, {
+    messages: [...current.messages, ...extra],
+    title,
+  });
 }
 
 export function lastPublicSessionUpdate() {

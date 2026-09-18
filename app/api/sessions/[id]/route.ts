@@ -1,11 +1,13 @@
 import { userFromRequest } from "@/lib/auth";
 import {
   canAccessSession,
+  canWriteSession,
   deleteStoredSession,
   getStoredSession,
   updateStoredSession,
   type SessionVisibility,
 } from "@/lib/session-store";
+import { lastUserPrompt } from "@/lib/public-messages";
 import type { UIMessage } from "ai";
 
 export const runtime = "nodejs";
@@ -35,9 +37,6 @@ export async function PATCH(req: Request, context: RouteContext) {
   if (session.ownerId !== user.id && session.visibility !== "public") {
     return errorJson("这是别人的个人会话", 403);
   }
-  if (session.ownerId !== user.id) {
-    return errorJson("只有创建者能改这个会话", 403);
-  }
   const body = (await req.json().catch(() => ({}))) as {
     title?: string;
     messages?: UIMessage[];
@@ -45,6 +44,20 @@ export async function PATCH(req: Request, context: RouteContext) {
   };
   const visibility =
     body.visibility === "public" || body.visibility === "personal" ? body.visibility : undefined;
+  if (visibility && session.ownerId !== user.id) {
+    return errorJson("只有创建者能改会话类型", 403);
+  }
+  if (body.messages && !canWriteSession(session, user.id)) {
+    return errorJson("无权改这个会话", 403);
+  }
+  if (
+    body.messages &&
+    session.visibility === "public" &&
+    lastUserPrompt(session.messages) &&
+    lastUserPrompt(body.messages) !== lastUserPrompt(session.messages)
+  ) {
+    return Response.json({ session, ignored: true });
+  }
   const updated = updateStoredSession(id, {
     title: body.title,
     messages: body.messages,

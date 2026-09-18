@@ -8,7 +8,7 @@ export type AgentSettings = {
 export const PROVIDER_PRESETS = [
   {
     id: "cursor",
-    name: "Cursor（当前账号）",
+    name: "Cursor",
     baseURL: "cursor://agent",
     model: "grok-4.6",
   },

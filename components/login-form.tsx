@@ -44,7 +44,7 @@ export function LoginForm() {
           <span className="brand-mark">脑</span>
           <div>
             <div className="brand-name">OPS大脑</div>
-            <div className="brand-sub">登录后即可共用公共会话</div>
+            <div className="brand-sub">AIOPS Web 智能体</div>
           </div>
         </div>
         <h1>{mode === "login" ? "登录平台" : "创建账号"}</h1>

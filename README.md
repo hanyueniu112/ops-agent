@@ -6,13 +6,14 @@
 
 **当然他的最主要责任是作为AIOPS系统的一块重要拼图**
 
-更完整的功能清单见 [doc/当前功能.md](doc/当前功能.md)。
+更完整的功能清单见 [doc/当前功能.md](doc/当前功能.md)，给其它服务调用的接口见 [doc/北向API.md](doc/北向API.md)。
 
 ## 定位
 
 运维场景里大量工作是重复的：看目录、翻日志、改配置、写脚本、查文档、按规范落技能。OPS大脑把这些收进同一个 Agent：
 
 - **通用**：不绑死某一套监控或工单系统，先提供文件、命令、检索、技能这些底座能力
+- **AIOPS Web**：部署后多人共用同一套智能体；公共会话所有登录用户都能看、都能继续问
 - **可扩展**：用 Agent Skill（`SKILL.md`）把团队规范、排障手册、发布清单按分组变成可加载的能力；Dream 把公共会话沉淀成长期记忆
 
 后续会沿这条线补更多 OPS 场景（巡检、变更、排障、知识沉淀），而不是做成又一个聊天框。
@@ -33,7 +34,7 @@ npm install
 copy .env.example .env.local
 ```
 
-在 `.env.local` 里填入 `CURSOR_API_KEY`（使用 Cursor 当前账号时）。然后：
+在 `.env.local` 里填入服务端 `CURSOR_API_KEY`。然后：
 
 ```bash
 npm run dev
@@ -50,13 +51,13 @@ npm run dev
 | 能力 | 说明 |
 | --- | --- |
 | 登录 | 平台账号，登录后才能看会话 |
-| 会话 | 每个对话一条 URL；**公共会话**所有登录用户可见，**个人会话**仅自己可见 |
+| 会话 | 每个对话一条 URL；**公共会话**所有登录用户可见并能继续问（同时问以最后一条为准），**个人会话**仅自己可见 |
 | 持久化 | SQLite（`data/ops.sqlite`），换浏览器、重启项目都还在 |
 | 工作区 | Agent 读写、搜索、执行命令都落在 `workspace/` |
 | 技能 | 按分组放在 `workspace/.cursor/skills/{分组}/{名称}`；内置分组：通用、告警分析、请求调用、日志流 |
 | Dream | 浅睡 / REM / 深睡整理**公共会话**到 `workspace/.ops/MEMORY.md`；个人会话不进入记忆 |
-| 模型 | 默认 Cursor 本机 Agent；也可接外部 API |
-| 正文 | Markdown 渲染；Think / 工具调用默认折叠；每轮正文可导出 `.md` |
+| 模型 | 默认服务端 Cursor Agent；也可接外部 API |
+| 北向 API | `/api/v1`，固定系统账号 `aiops`，调用方不用传 Token。说明见 [doc/北向API.md](doc/北向API.md) |
 
 ## 技术栈
 
@@ -69,7 +70,7 @@ npm run dev
 ## 安全注意
 
 - 不要把 `.env.local`、API Key、`.weave-agents.json` 提交进 Git
-- `run_command` 会在工作区执行本机命令，只建议在受控环境使用
+- `run_command` 会在服务器工作区执行命令，只建议在受控环境使用
 - Agent 以你的身份访问 Cursor 工具与 MCP，只加载可信技能与 MCP 源
 
 ## 许可证

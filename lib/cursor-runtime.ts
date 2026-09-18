@@ -31,7 +31,7 @@ async function saveAgentId(sessionId: string, agentId: string) {
   await writeFile(STORE, JSON.stringify(store, null, 2), "utf8");
 }
 
-function lastUserText(messages: UIMessage[]) {
+export function lastUserText(messages: UIMessage[]) {
   const user = [...messages].reverse().find((message) => message.role === "user");
   if (!user) return "";
   return user.parts
@@ -63,14 +63,103 @@ export function cursorStatus() {
   };
 }
 
+export async function runCursorAgent(options: {
+  messages: UIMessage[];
+  sessionId?: string;
+  model?: string;
+  abortSignal?: AbortSignal;
+}): Promise<{
+  text: string;
+  thinking: string;
+  tools: Array<{ id: string; name: string; input?: unknown; output?: unknown; error?: string }>;
+  error?: string;
+}> {
+  const collected = {
+    text: "",
+    thinking: "",
+    tools: [] as Array<{ id: string; name: string; input?: unknown; output?: unknown; error?: string }>,
+    error: "",
+  };
+
+  const response = await streamCursorAgent(options);
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Cursor Agent 运行失败");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Cursor Agent 没有返回内容");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const toolMap = new Map<string, (typeof collected.tools)[number]>();
+
+  const consume = (chunk: string) => {
+    buffer += chunk;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      let event: Record<string, unknown>;
+      try {
+        event = JSON.parse(payload) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const type = String(event.type || "");
+      if (type === "text-delta" && typeof event.delta === "string") collected.text += event.delta;
+      if (type === "reasoning-delta" && typeof event.delta === "string") collected.thinking += event.delta;
+      if (type === "tool-input-available") {
+        const id = String(event.toolCallId || "");
+        const item = {
+          id,
+          name: String(event.toolName || "tool"),
+          input: event.input,
+        };
+        toolMap.set(id, item);
+      }
+      if (type === "tool-output-available") {
+        const id = String(event.toolCallId || "");
+        const current = toolMap.get(id) || { id, name: "tool" };
+        current.output = event.output;
+        toolMap.set(id, current);
+      }
+      if (type === "tool-output-error") {
+        const id = String(event.toolCallId || "");
+        const current = toolMap.get(id) || { id, name: "tool" };
+        current.error = String(event.errorText || "工具调用失败");
+        toolMap.set(id, current);
+      }
+      if (type === "error") collected.error = String(event.errorText || "这次任务没有完成。");
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    consume(decoder.decode(value, { stream: true }));
+  }
+  consume(decoder.decode());
+  collected.tools = [...toolMap.values()];
+  return {
+    text: collected.text.trim(),
+    thinking: collected.thinking.trim(),
+    tools: collected.tools,
+    error: collected.error || undefined,
+  };
+}
+
 export async function streamCursorAgent(options: {
   messages: UIMessage[];
   sessionId?: string;
   model?: string;
+  abortSignal?: AbortSignal;
 }) {
   const apiKey = process.env.CURSOR_API_KEY?.trim();
   if (!apiKey) {
-    return new Response("本机还没有 Cursor API Key。", { status: 400 });
+    return new Response("还没有配置 Cursor API Key。", { status: 400 });
   }
 
   const prompt = lastUserText(options.messages);
@@ -141,6 +230,7 @@ export async function streamCursorAgent(options: {
           : prompt;
         const run = await agent.send(prefixed);
         for await (const event of run.stream()) {
+          if (options.abortSignal?.aborted) break;
           if (event.type === "assistant") {
             for (const block of event.message.content) {
               if (block.type === "text" && block.text) {
@@ -192,9 +282,13 @@ export async function streamCursorAgent(options: {
             }
           }
         }
-        const result = await run.wait();
-        if (result.status === "error") {
-          writer.write({ type: "error", errorText: "这次任务没有完成。" });
+        if (options.abortSignal?.aborted) {
+          writer.write({ type: "error", errorText: "已被后一条提问覆盖" });
+        } else {
+          const result = await run.wait();
+          if (result.status === "error") {
+            writer.write({ type: "error", errorText: "这次任务没有完成。" });
+          }
         }
       } finally {
         if (reasoningOpen) writer.write({ type: "reasoning-end", id: reasoningId });

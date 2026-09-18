@@ -213,7 +213,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <p className="dialog-copy">
-          技能按分组存放：告警分析、请求调用、日志流、通用。项目技能给这个工作区用，个人技能给本机所有项目用。
+          技能按分组存放：告警分析、请求调用、日志流、通用。项目技能给这个工作区用，个人技能存在服务器侧、全站共用。
         </p>
         <div className="skills-layout">
           <aside className="skills-nav">

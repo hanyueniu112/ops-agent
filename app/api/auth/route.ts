@@ -13,6 +13,7 @@ import {
   validateUsername,
   verifyPassword,
 } from "@/lib/auth";
+import { isReservedUsername } from "@/lib/aiops-account";
 
 export const runtime = "nodejs";
 
@@ -55,6 +56,7 @@ export async function POST(req: Request) {
 
   try {
     if (action === "register") {
+      if (isReservedUsername(username)) return errorJson("该用户名为系统保留账号", 400);
       if (findUserByUsername(username)) return errorJson("用户名已被占用", 409);
       const user = createUser(username, await hashPassword(password));
       const token = issueToken(user.id);
@@ -70,6 +72,9 @@ export async function POST(req: Request) {
     const found = findUserByUsername(username);
     if (!found || !(await verifyPassword(password, found.password_hash))) {
       return errorJson("用户名或密码不对", 401);
+    }
+    if (isReservedUsername(found.username)) {
+      return errorJson("aiops 是系统账号，请走北向 API，不要在网页登录", 403);
     }
     const token = issueToken(found.id);
     return new Response(JSON.stringify({ user: { id: found.id, username: found.username } }), {

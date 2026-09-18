@@ -15,7 +15,8 @@ function openDb() {
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'human'
     );
 
     CREATE TABLE IF NOT EXISTS auth_tokens (
@@ -52,8 +53,87 @@ function openDb() {
       diary TEXT NOT NULL DEFAULT '',
       candidates_json TEXT NOT NULL DEFAULT '[]'
     );
+
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      prefix TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER,
+      revoked_at INTEGER,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_jobs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      prompt TEXT NOT NULL DEFAULT '',
+      reply TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      result_json TEXT NOT NULL DEFAULT '{}',
+      base_messages_json TEXT NOT NULL DEFAULT '[]',
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chat_jobs_session ON chat_jobs(session_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(token_hash);
   `);
   return db;
+}
+
+function columnNames(db: DatabaseSync, table: string) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  return new Set(rows.map((row) => row.name));
+}
+
+function ensureSchema(db: DatabaseSync) {
+  const userCols = columnNames(db, "users");
+  if (userCols.size > 0 && !userCols.has("kind")) {
+    db.exec("ALTER TABLE users ADD COLUMN kind TEXT NOT NULL DEFAULT 'human'");
+  }
+  const jobCols = columnNames(db, "chat_jobs");
+  if (jobCols.size > 0 && !jobCols.has("base_messages_json")) {
+    db.exec("ALTER TABLE chat_jobs ADD COLUMN base_messages_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      prefix TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      user_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER,
+      revoked_at INTEGER,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_jobs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      prompt TEXT NOT NULL DEFAULT '',
+      reply TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      result_json TEXT NOT NULL DEFAULT '{}',
+      base_messages_json TEXT NOT NULL DEFAULT '[]',
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chat_jobs_session ON chat_jobs(session_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(token_hash);
+  `);
 }
 
 export function getDb() {
@@ -61,5 +141,6 @@ export function getDb() {
   if (!globalDb.__opsSqlite) {
     globalDb.__opsSqlite = openDb();
   }
+  ensureSchema(globalDb.__opsSqlite);
   return globalDb.__opsSqlite;
 }

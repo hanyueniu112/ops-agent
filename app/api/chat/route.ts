@@ -4,7 +4,9 @@ import { userFromRequest } from "@/lib/auth";
 import { SYSTEM_PROMPT } from "@/lib/prompt";
 import { createAgentTools } from "@/lib/tools";
 import { streamCursorAgent } from "@/lib/cursor-runtime";
-import { canAccessSession, getStoredSession } from "@/lib/session-store";
+import { canAccessSession, canWriteSession, getStoredSession, updateStoredSession } from "@/lib/session-store";
+import { beginSessionTurn } from "@/lib/chat-turns";
+import { lastUserPrompt, titleFromText } from "@/lib/public-messages";
 import { ensureDreamScheduler } from "@/lib/dream";
 import { memoryPromptSnippet } from "@/lib/memory";
 import { ensureWorkspace } from "@/lib/workspace";
@@ -27,11 +29,18 @@ export async function POST(req: Request) {
   ensureDreamScheduler();
 
   const body = (await req.json()) as ChatRequest;
+  let abortSignal: AbortSignal | undefined;
   if (body.sessionId) {
     const session = getStoredSession(body.sessionId);
     if (!session) return new Response("会话不存在", { status: 404 });
     if (!canAccessSession(session, user.id)) return new Response("无权访问该会话", { status: 403 });
-    if (session.ownerId !== user.id) return new Response("只有创建者能在这个会话里发消息", { status: 403 });
+    if (!canWriteSession(session, user.id)) return new Response("无权在这个会话里发消息", { status: 403 });
+    abortSignal = beginSessionTurn(body.sessionId).signal;
+    const title = session.messages.length === 0 ? titleFromText(lastUserPrompt(body.messages || [])) : undefined;
+    updateStoredSession(body.sessionId, {
+      messages: body.messages || [],
+      title,
+    });
   }
 
   const preset = body.preset?.trim() || "cursor";
@@ -42,6 +51,7 @@ export async function POST(req: Request) {
       messages: body.messages,
       sessionId: body.sessionId,
       model: body.model,
+      abortSignal,
     });
   }
 
@@ -77,6 +87,7 @@ export async function POST(req: Request) {
     messages: await convertToModelMessages(body.messages),
     tools: createAgentTools(),
     stopWhen: stepCountIs(8),
+    abortSignal,
   });
 
   return result.toUIMessageStreamResponse();

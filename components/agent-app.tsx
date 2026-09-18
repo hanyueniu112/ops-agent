@@ -358,7 +358,7 @@ export function AgentApp() {
           <span className="brand-mark">脑</span>
           <div>
             <div className="brand-name">OPS大脑</div>
-            <div className="brand-sub">通用化 OPS Agent</div>
+            <div className="brand-sub">AIOPS Web 智能体</div>
           </div>
         </div>
         <div className="new-task-row">
@@ -417,7 +417,7 @@ export function AgentApp() {
           </div>
           文件写在 <code>workspace/</code>
           <br />
-          会话存在 <code>data/ops.sqlite</code>
+          会话保存在服务器
         </div>
       </aside>
 
@@ -451,6 +451,7 @@ export function AgentApp() {
               <ChatPane
                 session={session}
                 isOwner={user?.id === session.ownerId}
+                canWrite={session.visibility === "public" || user?.id === session.ownerId}
                 copied={copied}
                 onCopyId={() => void copySessionId()}
                 onVisibility={(visibility) => {
@@ -507,6 +508,7 @@ export function AgentApp() {
 function ChatPane({
   session,
   isOwner,
+  canWrite,
   copied,
   onCopyId,
   onVisibility,
@@ -519,6 +521,7 @@ function ChatPane({
 }: {
   session: AgentSession;
   isOwner: boolean;
+  canWrite: boolean;
   copied: boolean;
   onCopyId: () => void;
   onVisibility: (visibility: SessionVisibility) => void;
@@ -589,6 +592,8 @@ function ChatPane({
             >
               {session.visibility === "public" ? "改为个人" : "改为公共"}
             </button>
+          ) : session.visibility === "public" ? (
+            <span className="stage-meta">公共会话，所有人都能继续问</span>
           ) : (
             <span className="stage-meta">只读</span>
           )}
@@ -608,12 +613,12 @@ function ChatPane({
         {shown.length === 0 ? (
           <div className="empty">
             <p className="empty-kicker">把任务交给 OPS大脑</p>
-            <h1>运维与事务的本机智能体。</h1>
+            <h1>AIOPS Web 智能体。</h1>
             <p>
               它不只聊天：会读文件、写代码、打开网页，并在工作区里把事情做完。
             </p>
             <div className="suggestions">
-              {isOwner
+              {canWrite
                 ? SUGGESTIONS.map((item) => (
                     <button key={item} onClick={() => submit(item)}>
                       {item}
@@ -643,7 +648,7 @@ function ChatPane({
         {error ? <div className="error-line">{error.message}</div> : null}
       </div>
 
-      {isOwner ? (
+      {canWrite ? (
         <form
           className="composer"
           onSubmit={(event) => {
@@ -674,7 +679,7 @@ function ChatPane({
           )}
         </form>
       ) : (
-        <div className="composer readonly-composer">这是 {session.ownerName} 的公共会话，你可以看记录，但不能代发。</div>
+        <div className="composer readonly-composer">这是 {session.ownerName} 的个人会话，只有创建者能发消息。</div>
       )}
     </main>
   );
@@ -700,8 +705,8 @@ function SettingsDialog({
         </div>
         <p className="dialog-copy">
           {settings.preset === "cursor"
-            ? `正在使用当前 Cursor 账号的 ${settings.model || "grok-4.6"}。密钥保存在本机服务器，不会出现在浏览器里。`
-            : "使用任意 OpenAI 兼容接口。密钥只存在这台电脑的浏览器里，请求发往本机 Next.js 再转给模型服务。"}
+            ? `正在使用服务端 Cursor 账号的 ${settings.model || "grok-4.6"}。密钥保存在服务器，不会出现在浏览器里。`
+            : "使用任意 OpenAI 兼容接口。密钥只存在你的浏览器里，由 OPS大脑转发到模型服务。"}
         </p>
         <label>
           服务商
@@ -725,7 +730,7 @@ function SettingsDialog({
           </select>
         </label>
         {settings.preset === "cursor" ? (
-          <p className="dialog-copy">API Key：已使用本机 Cursor 凭证</p>
+          <p className="dialog-copy">API Key：已使用服务端 Cursor 凭证</p>
         ) : (
           <label>
             API Key

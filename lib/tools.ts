@@ -215,7 +215,7 @@ export function createAgentTools() {
       },
     }),
     now: tool({
-      description: "获取当前本地日期时间。",
+      description: "获取当前日期时间。",
       inputSchema: z.object({
         label: z.string().optional().describe("可选备注，可忽略"),
       }),
