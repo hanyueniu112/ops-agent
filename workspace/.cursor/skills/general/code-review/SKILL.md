@@ -1,6 +1,7 @@
 ---
 name: code-review
 description: 审查工作区代码并给出可执行的修改建议。用户要求 code review、审查代码、找 bug 或评价改动时使用。
+group: general
 ---
 
 # code-review

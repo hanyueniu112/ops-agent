@@ -1,104 +1,169 @@
 import type { UIMessage } from "ai";
 
+export type SessionVisibility = "public" | "personal";
+
 export type AgentSession = {
   id: string;
   title: string;
+  visibility: SessionVisibility;
+  ownerId: string;
+  ownerName: string;
+  createdAt: number;
   updatedAt: number;
   messages: UIMessage[];
 };
 
-export const SESSIONS_KEY = "weave-agent-sessions";
-export const ACTIVE_KEY = "weave-agent-active";
+export type AuthUser = {
+  id: string;
+  username: string;
+};
 
-function messagesKey(id: string) {
-  return `weave-agent-messages:${id}`;
+const LAST_KEY = "ops-last-session";
+const MIGRATED_KEY = "ops-sessions-migrated";
+
+export function sessionPath(id: string) {
+  return `/s/${id}`;
 }
 
 export function createSessionId() {
   return crypto.randomUUID();
 }
 
-export function sessionPath(id: string) {
-  return `/s/${id}`;
-}
-
-function readList(): AgentSession[] {
-  try {
-    const raw = localStorage.getItem(SESSIONS_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as AgentSession[];
-  } catch {
-    return [];
+async function parseJson<T>(response: Response): Promise<T> {
+  const data = (await response.json().catch(() => ({}))) as T & { error?: string };
+  if (response.status === 401 && typeof window !== "undefined") {
+    const next = window.location.pathname + window.location.search;
+    window.location.href = `/login?next=${encodeURIComponent(next)}`;
   }
-}
-
-export function loadSessionMessages(id: string): UIMessage[] {
-  if (!id) return [];
-  try {
-    const raw = localStorage.getItem(messagesKey(id));
-    if (raw) {
-      const parsed = JSON.parse(raw) as UIMessage[];
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch {
-    // fall through to list storage
+  if (!response.ok) {
+    throw new Error(data.error || `请求失败 ${response.status}`);
   }
-  const fromList = readList().find((session) => session.id === id);
-  return fromList?.messages?.length ? fromList.messages : [];
+  return data;
 }
 
-export function saveSessionMessages(id: string, messages: UIMessage[]) {
+export async function fetchMe() {
+  const data = await parseJson<{ user: AuthUser }>(await fetch("/api/auth", { cache: "no-store" }));
+  return data.user;
+}
+
+export async function logoutUser() {
+  await fetch("/api/auth", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "logout" }),
+  });
+}
+
+export async function listSessions() {
+  const data = await parseJson<{ sessions: AgentSession[] }>(
+    await fetch("/api/sessions", { cache: "no-store" }),
+  );
+  return data.sessions;
+}
+
+export async function getSession(id: string) {
+  const data = await parseJson<{ session: AgentSession }>(
+    await fetch(`/api/sessions/${encodeURIComponent(id)}`, { cache: "no-store" }),
+  );
+  return data.session;
+}
+
+export async function createSession(input: {
+  visibility: SessionVisibility;
+  id?: string;
+  title?: string;
+  messages?: UIMessage[];
+}) {
+  const data = await parseJson<{ session: AgentSession }>(
+    await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+  rememberSession(data.session.id);
+  return data.session;
+}
+
+const saveTimers = new Map<string, number>();
+
+export function saveSessionMessages(id: string, messages: UIMessage[], title?: string) {
   if (!id || messages.length === 0) return;
-  localStorage.setItem(messagesKey(id), JSON.stringify(messages));
+  const previous = saveTimers.get(id);
+  if (previous) window.clearTimeout(previous);
+  const timer = window.setTimeout(() => {
+    saveTimers.delete(id);
+    void fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, title }),
+    });
+  }, 400);
+  saveTimers.set(id, timer);
 }
 
-export function deleteSessionMessages(id: string) {
-  localStorage.removeItem(messagesKey(id));
-}
-
-export function loadSessions(): AgentSession[] {
-  return readList().map((session) => {
-    const stored = loadSessionMessages(session.id);
-    const messages = stored.length > 0 ? stored : session.messages || [];
-    if (messages.length > 0) saveSessionMessages(session.id, messages);
-    return { ...session, messages };
+export async function flushSessionSave(id: string, messages: UIMessage[], title?: string) {
+  const previous = saveTimers.get(id);
+  if (previous) window.clearTimeout(previous);
+  saveTimers.delete(id);
+  if (!id || messages.length === 0) return;
+  await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages, title }),
   });
 }
 
-export function saveSessions(sessions: AgentSession[], activeId?: string) {
-  if (sessions.length === 0) return;
-  const previous = new Map(readList().map((session) => [session.id, session]));
-  const merged = sessions.map((session) => {
-    const fromKey = loadSessionMessages(session.id);
-    const fromList = previous.get(session.id)?.messages || [];
-    const kept =
-      session.messages.length > 0
-        ? session.messages
-        : fromKey.length > 0
-          ? fromKey
-          : fromList;
-    if (kept.length > 0) saveSessionMessages(session.id, kept);
-    const title =
-      session.title === "新任务" && kept.length > 0 && previous.get(session.id)?.title
-        ? previous.get(session.id)!.title
-        : session.title;
-    return { ...session, title, messages: kept };
-  });
-  localStorage.setItem(SESSIONS_KEY, JSON.stringify(merged));
-  if (activeId) localStorage.setItem(ACTIVE_KEY, activeId);
+export async function updateSessionVisibility(id: string, visibility: SessionVisibility) {
+  const data = await parseJson<{ session: AgentSession }>(
+    await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ visibility }),
+    }),
+  );
+  return data.session;
 }
 
-export function lastActiveId() {
-  return localStorage.getItem(ACTIVE_KEY) || "";
+export async function deleteSession(id: string) {
+  await parseJson<{ ok: boolean }>(
+    await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  );
 }
 
-export function newSession(id = createSessionId()): AgentSession {
-  return {
-    id,
-    title: "新任务",
-    updatedAt: Date.now(),
-    messages: [],
-  };
+export function rememberSession(id: string) {
+  if (!id) return;
+  localStorage.setItem(LAST_KEY, id);
+}
+
+export function lastRememberedSession() {
+  return localStorage.getItem(LAST_KEY) || "";
+}
+
+export async function migrateLegacySessions() {
+  if (typeof window === "undefined") return;
+  if (localStorage.getItem(MIGRATED_KEY)) return;
+  try {
+    const raw = localStorage.getItem("weave-agent-sessions");
+    const list = raw ? (JSON.parse(raw) as Array<{ id: string; title?: string }>) : [];
+    for (const item of list) {
+      if (!item?.id) continue;
+      const messageRaw = localStorage.getItem(`weave-agent-messages:${item.id}`);
+      const messages = messageRaw ? (JSON.parse(messageRaw) as UIMessage[]) : [];
+      try {
+        await createSession({
+          id: item.id,
+          visibility: "personal",
+          title: item.title || "新任务",
+          messages: Array.isArray(messages) ? messages : [],
+        });
+      } catch {
+        // already on server or no longer valid
+      }
+    }
+  } finally {
+    localStorage.setItem(MIGRATED_KEY, "1");
+  }
 }
 
 export function parseSessionRef(raw: string) {

@@ -1,11 +1,16 @@
 import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { userFromRequest } from "@/lib/auth";
 import { SYSTEM_PROMPT } from "@/lib/prompt";
 import { createAgentTools } from "@/lib/tools";
 import { streamCursorAgent } from "@/lib/cursor-runtime";
+import { canAccessSession, getStoredSession } from "@/lib/session-store";
+import { ensureDreamScheduler } from "@/lib/dream";
+import { memoryPromptSnippet } from "@/lib/memory";
 import { ensureWorkspace } from "@/lib/workspace";
 
 export const maxDuration = 300;
+export const runtime = "nodejs";
 
 type ChatRequest = {
   messages: UIMessage[];
@@ -17,7 +22,18 @@ type ChatRequest = {
 };
 
 export async function POST(req: Request) {
+  const user = userFromRequest(req);
+  if (!user) return new Response("未登录", { status: 401 });
+  ensureDreamScheduler();
+
   const body = (await req.json()) as ChatRequest;
+  if (body.sessionId) {
+    const session = getStoredSession(body.sessionId);
+    if (!session) return new Response("会话不存在", { status: 404 });
+    if (!canAccessSession(session, user.id)) return new Response("无权访问该会话", { status: 403 });
+    if (session.ownerId !== user.id) return new Response("只有创建者能在这个会话里发消息", { status: 403 });
+  }
+
   const preset = body.preset?.trim() || "cursor";
   const useCursor = preset === "cursor" || (!body.apiKey?.trim() && Boolean(process.env.CURSOR_API_KEY));
 
@@ -44,6 +60,10 @@ export async function POST(req: Request) {
   }
 
   await ensureWorkspace();
+  const memory = await memoryPromptSnippet();
+  const system = memory
+    ? `${SYSTEM_PROMPT}\n\n## 长期记忆（Dream 深睡沉淀）\n${memory}`
+    : SYSTEM_PROMPT;
 
   const openai = createOpenAI({
     apiKey,
@@ -53,7 +73,7 @@ export async function POST(req: Request) {
 
   const result = streamText({
     model: openai(model),
-    system: SYSTEM_PROMPT,
+    system,
     messages: await convertToModelMessages(body.messages),
     tools: createAgentTools(),
     stopWhen: stepCountIs(8),

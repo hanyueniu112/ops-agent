@@ -12,7 +12,7 @@
 
 - **通用**：不绑死某一套监控或工单系统，先提供文件、命令、检索、技能这些底座能力
 - **本机优先**：默认跑在你自己的电脑上，工作区就在项目里的 `workspace/`
-- **可扩展**：用 Agent Skill（`SKILL.md`）把团队规范、排障手册、发布清单变成可加载的能力
+- **可扩展**：用 Agent Skill（`SKILL.md`）把团队规范、排障手册、发布清单按分组变成可加载的能力；Dream 把公共会话沉淀成长期记忆
 
 后续会沿这条线补更多 OPS 场景（巡检、变更、排障、知识沉淀），而不是做成又一个聊天框。
 
@@ -31,7 +31,9 @@ copy .env.example .env.local
 npm run dev
 ```
 
-浏览器打开 [http://localhost:3000](http://localhost:3000)。根路径会自动进入一个会话地址 `/s/{sessionId}`。
+浏览器打开 [http://localhost:3000](http://localhost:3000)，先注册/登录。根路径会进入一个会话地址 `/s/{sessionId}`。
+
+会话存在项目根目录的 `data/ops.sqlite`（可用环境变量 `OPS_DATA_DIR` 改路径）。这个文件不在 `.next` 里，`npm run dev` 重启、重新 `next build` 都不会删掉。
 
 也可以在页面右上角「设置」里改用 DeepSeek、OpenAI、Kimi 或任意 OpenAI 兼容接口。
 
@@ -39,9 +41,12 @@ npm run dev
 
 | 能力 | 说明 |
 | --- | --- |
-| 会话 | 每个对话一条 URL，支持跳转、复制 session id，切走后后台仍在跑 |
+| 登录 | 平台账号，登录后才能看会话 |
+| 会话 | 每个对话一条 URL；**公共会话**所有登录用户可见，**个人会话**仅自己可见 |
+| 持久化 | SQLite（`data/ops.sqlite`），换浏览器、重启项目都还在 |
 | 工作区 | Agent 读写、搜索、执行命令都落在 `workspace/` |
-| 技能 | 项目技能在 `workspace/.cursor/skills`，个人技能在用户目录 `.cursor/skills` |
+| 技能 | 按分组放在 `workspace/.cursor/skills/{分组}/{名称}`；内置分组：通用、告警分析、请求调用、日志流 |
+| Dream | 浅睡 / REM / 深睡整理**公共会话**到 `workspace/.ops/MEMORY.md`；个人会话不进入记忆 |
 | 模型 | 默认 Cursor 本机 Agent；也可接外部 API |
 | 正文 | Markdown 渲染；Think / 工具调用默认折叠；每轮正文可导出 `.md` |
 
@@ -50,7 +55,8 @@ npm run dev
 - Next.js 16（App Router）
 - AI SDK 7 + Cursor SDK（`@cursor/sdk`）
 - Tailwind CSS 4
-- 会话与设置存在浏览器 `localStorage`（本机使用，不经过额外后端账号体系）
+- 用户与会话存在 SQLite（Node 内置 `node:sqlite`）
+- 模型设置仍存在浏览器 `localStorage`
 
 ## 安全注意
 

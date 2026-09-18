@@ -12,7 +12,9 @@ function notify(sessionId: string) {
 
 export function subscribeSessionChats(listener: (sessionId: string) => void) {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function peekSessionChat(sessionId: string) {

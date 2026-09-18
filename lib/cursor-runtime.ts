@@ -9,6 +9,9 @@ import path from "node:path";
 import { ensureWorkspace, workspaceRoot } from "@/lib/workspace";
 import { ensureSkillsDirs, personalSkillsRoot } from "@/lib/skills";
 import { skillCustomTools } from "@/lib/skill-tools";
+import { dreamCustomTools } from "@/lib/dream-tools";
+import { readMemoryMarkdown } from "@/lib/memory";
+import { ensureDreamScheduler } from "@/lib/dream";
 
 const STORE = path.join(process.cwd(), ".weave-agents.json");
 
@@ -77,6 +80,7 @@ export async function streamCursorAgent(options: {
 
   await ensureWorkspace();
   await ensureSkillsDirs();
+  ensureDreamScheduler();
   Cursor.configure({ local: { useHttp1ForAgent: true } });
 
   const sessionId = options.sessionId?.trim() || "default";
@@ -90,7 +94,7 @@ export async function streamCursorAgent(options: {
       cwd: workspaceRoot(),
       dirs: [personalSkillsRoot()],
       settingSources,
-      customTools: skillCustomTools(),
+      customTools: { ...skillCustomTools(), ...dreamCustomTools() },
     },
   };
 
@@ -131,7 +135,11 @@ export async function streamCursorAgent(options: {
       };
 
       try {
-        const run = await agent.send(prompt);
+        const memory = (await readMemoryMarkdown()).trim();
+        const prefixed = memory
+          ? `长期记忆（Dream 深睡，仅公共会话沉淀）如下。相关时先对照记忆再动手。完整文件在 workspace/.ops/MEMORY.md，日记在 .ops/DREAMS.md。\n\n${memory.slice(0, 3000)}\n\n用户任务：\n${prompt}`
+          : prompt;
+        const run = await agent.send(prefixed);
         for await (const event of run.stream()) {
           if (event.type === "assistant") {
             for (const block of event.message.content) {

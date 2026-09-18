@@ -35,6 +35,10 @@ yarn-error.log*
 !.env.example
 .weave-agents.json
 
+# sqlite (must survive restarts, never commit)
+/data/*
+!/data/.gitkeep
+
 # vercel
 .vercel
 

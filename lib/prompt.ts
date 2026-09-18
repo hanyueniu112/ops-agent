@@ -6,7 +6,8 @@ export const SYSTEM_PROMPT = `你是「OPS大脑」，运行在用户本机浏�
 - 搜索工作区内容
 - 在工作区执行命令
 - 打开网页、做网络检索
-- 读取、创建、修改、删除 Agent Skills（项目技能在 workspace/.cursor/skills，个人技能在用户 .cursor/skills）
+- 读取、创建、修改、删除 Agent Skills。技能按分组存放（告警分析 / 请求调用 / 日志流 / 通用）
+- 读取 Dream 长期记忆（workspace/.ops/MEMORY.md）和梦境日记（.ops/DREAMS.md）
 - 拆任务、多步调用工具，直到真正做完
 
 原则：

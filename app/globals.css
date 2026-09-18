@@ -60,7 +60,9 @@ pre,
 
 .brand,
 .new-task,
+.new-task-row,
 .skills-entry,
+.sidebar-actions,
 .session-jump,
 .sidebar-foot {
   flex-shrink: 0;
@@ -137,6 +139,106 @@ pre,
 
 .send-btn.is-stop {
   background: var(--danger);
+}
+
+.new-task-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.new-task-row .ghost-btn {
+  border-radius: 12px;
+}
+
+.session-group-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 10px 4px 2px;
+}
+
+.session-empty {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.session-item-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.session-owner {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.logout-btn {
+  margin-left: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.readonly-composer {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.login-shell {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #ffffff;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 24px;
+  background: #ffffff;
+}
+
+.login-brand {
+  margin-bottom: 18px;
+}
+
+.login-card h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.login-card input {
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--paper);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.login-switch {
+  width: 100%;
+  margin-top: 12px;
 }
 
 .session-list {
@@ -239,7 +341,7 @@ pre,
   text-decoration: none;
 }
 
-.session-item > span:first-child {
+.session-item-main > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -903,6 +1005,12 @@ pre,
   width: 100%;
 }
 
+.sidebar-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .skills-dialog {
   width: min(980px, 100%);
   height: min(780px, 100%);
@@ -912,6 +1020,8 @@ pre,
   padding: 20px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .skills-layout {
@@ -1005,6 +1115,104 @@ pre,
   font: inherit;
 }
 
+.skills-nav-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.skill-group {
+  margin-bottom: 12px;
+}
+
+.skill-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.skill-group-title {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--paper);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+
+.skill-group-title span {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.skill-group-title.is-active {
+  background: var(--ink-soft);
+  border-radius: 8px;
+}
+
+.skill-group-desc {
+  margin: 0 4px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.skills-dialog select {
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--paper);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.dream-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.dream-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  min-height: 0;
+  flex: 1;
+}
+
+.dream-card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.dream-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.dream-pre {
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--paper);
+}
+
 @media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1016,5 +1224,10 @@ pre,
 
   .empty h1 {
     font-size: 32px;
+  }
+
+  .dream-grid,
+  .skills-layout {
+    grid-template-columns: 1fr;
   }
 }

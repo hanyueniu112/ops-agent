@@ -1,6 +1,7 @@
 ---
 name: brief-zh
 description: 用简体中文做简短回复。当用户要求简短、只要结论或少说废话时使用。
+group: general
 ---
 
 # brief-zh

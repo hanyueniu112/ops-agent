@@ -10,6 +10,7 @@ import { MarkdownView } from "@/components/markdown-view";
 import { ThinkBlock } from "@/components/think-block";
 import { ToolFold } from "@/components/tool-card";
 import { SkillsPanel } from "@/components/skills-panel";
+import { DreamPanel } from "@/components/dream-panel";
 import {
   disposeSessionChat,
   getSessionChat,
@@ -18,15 +19,21 @@ import {
   subscribeSessionChats,
 } from "@/lib/session-chats";
 import {
-  deleteSessionMessages,
-  loadSessionMessages,
-  loadSessions,
-  newSession,
+  createSession,
+  deleteSession,
+  fetchMe,
+  getSession,
+  listSessions,
+  logoutUser,
+  migrateLegacySessions,
   parseSessionRef,
+  rememberSession,
   saveSessionMessages,
-  saveSessions,
   sessionPath,
+  updateSessionVisibility,
   type AgentSession,
+  type AuthUser,
+  type SessionVisibility,
 } from "@/lib/sessions";
 import {
   DEFAULT_SETTINGS,
@@ -39,6 +46,7 @@ import {
 const SUGGESTIONS = [
   "看看工作区里现在有什么文件",
   "列出当前技能，再写一个项目技能",
+  "立刻跑一轮 Dream，把公共会话整理进记忆",
   "帮我在工作区写一个 hello.py 并运行它",
 ];
 
@@ -121,45 +129,98 @@ export function AgentApp() {
   const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
   const [settings, setSettings] = useState<AgentSettings>(DEFAULT_SETTINGS);
   const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [dreamOpen, setDreamOpen] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [jumpValue, setJumpValue] = useState("");
   const [jumpHint, setJumpHint] = useState("");
   const [copied, setCopied] = useState(false);
   const [busyIds, setBusyIds] = useState<string[]>([]);
+  const [accessError, setAccessError] = useState("");
+  const [detailReady, setDetailReady] = useState(false);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  async function refreshSessions() {
+    const listed = await listSessions();
+    setSessions((current) => {
+      const messagesById = new Map(current.map((item) => [item.id, item.messages]));
+      return listed.map((item) => ({
+        ...item,
+        messages: messagesById.get(item.id) || item.messages,
+      }));
+    });
+    return listed;
+  }
+
   useEffect(() => {
-    const stored = loadSessions();
-    setSessions(stored);
     const loaded = loadSettings();
     setSettings(loaded);
     if (loaded.preset !== "cursor" && !loaded.apiKey) setSettingsOpen(true);
-    setHydrated(true);
+    void (async () => {
+      try {
+        await migrateLegacySessions();
+        const me = await fetchMe();
+        setUser(me);
+        await refreshSessions();
+      } catch (error) {
+        setAccessError(error instanceof Error ? error.message : "加载失败");
+      } finally {
+        setHydrated(true);
+      }
+    })();
   }, []);
 
   useEffect(() => {
     if (!hydrated || !sessionId) return;
-    setSessions((current) => {
-      if (current.some((session) => session.id === sessionId)) return current;
-      const messages = loadSessionMessages(sessionId);
-      return [
-        {
-          ...newSession(sessionId),
-          messages,
-          title: messages.length > 0 ? titleFromMessages(messages) : "新任务",
-        },
-        ...current,
-      ];
-    });
+    let cancelled = false;
+    setDetailReady(false);
+    rememberSession(sessionId);
+    void (async () => {
+      try {
+        const session = await getSession(sessionId);
+        if (cancelled) return;
+        setAccessError("");
+        setSessions((current) => {
+          const others = current.filter((item) => item.id !== session.id);
+          return [session, ...others].sort((a, b) => b.updatedAt - a.updatedAt);
+        });
+        setDetailReady(true);
+      } catch (error) {
+        if (cancelled) return;
+        setAccessError(error instanceof Error ? error.message : "无法打开会话");
+        setDetailReady(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [hydrated, sessionId]);
 
   useEffect(() => {
-    if (!hydrated || !sessionId || sessions.length === 0) return;
-    saveSessions(sessions, sessionId);
-  }, [sessions, sessionId, hydrated]);
+    if (!hydrated) return;
+    const timer = window.setInterval(() => {
+      void refreshSessions();
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !sessionId) return;
+    const timer = window.setInterval(() => {
+      if (isSessionChatBusy(sessionId)) return;
+      void getSession(sessionId)
+        .then((session) => {
+          setSessions((current) =>
+            current.map((item) => (item.id === session.id ? { ...item, ...session } : item)),
+          );
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [hydrated, sessionId]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -173,8 +234,8 @@ export function AgentApp() {
       });
       const messages = peekSessionChat(id)?.messages || [];
       if (messages.length === 0) return;
-      saveSessionMessages(id, messages);
       const title = titleFromMessages(messages);
+      saveSessionMessages(id, messages, title);
       setSessions((current) => {
         const session = current.find((item) => item.id === id);
         if (!session || (session.messages === messages && session.title === title)) return current;
@@ -191,6 +252,8 @@ export function AgentApp() {
   }, [sessions, sessionId]);
 
   const active = sessions.find((session) => session.id === sessionId);
+  const publicSessions = sessions.filter((session) => session.visibility === "public");
+  const personalSessions = sessions.filter((session) => session.visibility === "personal");
 
   function updateSettings(next: AgentSettings) {
     setSettings(next);
@@ -199,10 +262,17 @@ export function AgentApp() {
 
   function openSession(id: string) {
     if (!id || id === sessionId) return;
+    rememberSession(id);
     router.push(sessionPath(id));
   }
 
-  function jumpToSession(event: FormEvent) {
+  async function startSession(visibility: SessionVisibility) {
+    const session = await createSession({ visibility });
+    setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+    router.push(sessionPath(session.id));
+  }
+
+  async function jumpToSession(event: FormEvent) {
     event.preventDefault();
     const id = parseSessionRef(jumpValue);
     if (!id) {
@@ -213,9 +283,14 @@ export function AgentApp() {
       setJumpHint("已在当前会话");
       return;
     }
-    setJumpHint("");
-    setJumpValue("");
-    openSession(id);
+    try {
+      await getSession(id);
+      setJumpHint("");
+      setJumpValue("");
+      openSession(id);
+    } catch (error) {
+      setJumpHint(error instanceof Error ? error.message : "无法打开会话");
+    }
   }
 
   async function copySessionId() {
@@ -225,7 +300,54 @@ export function AgentApp() {
     window.setTimeout(() => setCopied(false), 1200);
   }
 
-  if (!hydrated || !sessionId || !active) {
+  async function removeSession(session: AgentSession) {
+    await deleteSession(session.id);
+    disposeSessionChat(session.id);
+    setBusyIds((current) => current.filter((id) => id !== session.id));
+    const listed = (await refreshSessions()).filter((item) => item.id !== session.id);
+    if (session.id !== sessionId) return;
+    if (listed[0]) {
+      router.push(sessionPath(listed[0].id));
+      return;
+    }
+    const fresh = await createSession({ visibility: "personal" });
+    setSessions([fresh]);
+    router.push(sessionPath(fresh.id));
+  }
+
+  function renderSessionLink(session: AgentSession) {
+    return (
+      <Link
+        key={session.id}
+        href={sessionPath(session.id)}
+        className={`session-item ${session.id === sessionId ? "is-active" : ""}`}
+      >
+        <span className="session-item-main">
+          <span>{session.title}</span>
+          {session.visibility === "public" ? (
+            <span className="session-owner">{session.ownerName}</span>
+          ) : null}
+        </span>
+        {busyIds.includes(session.id) ? <span className="session-busy">处理中</span> : null}
+        {user?.id === session.ownerId ? (
+          <button
+            type="button"
+            className="session-delete"
+            aria-label="删除会话"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void removeSession(session);
+            }}
+          >
+            ×
+          </button>
+        ) : null}
+      </Link>
+    );
+  }
+
+  if (!hydrated) {
     return <div className="app-shell" />;
   }
 
@@ -236,25 +358,26 @@ export function AgentApp() {
           <span className="brand-mark">脑</span>
           <div>
             <div className="brand-name">OPS大脑</div>
-            <div className="brand-sub">本机 Agent</div>
+            <div className="brand-sub">通用化 OPS Agent</div>
           </div>
         </div>
-        <button
-          className="new-task"
-          onClick={() => {
-            const session = newSession();
-            const next = [session, ...sessions];
-            setSessions(next);
-            saveSessions(next, session.id);
-            router.push(sessionPath(session.id));
-          }}
-        >
-          新任务
-        </button>
-        <button className="ghost-btn skills-entry" onClick={() => setSkillsOpen(true)}>
-          技能
-        </button>
-        <form className="session-jump" onSubmit={jumpToSession}>
+        <div className="new-task-row">
+          <button className="new-task" onClick={() => void startSession("personal")}>
+            个人任务
+          </button>
+          <button className="ghost-btn" onClick={() => void startSession("public")}>
+            公共任务
+          </button>
+        </div>
+        <div className="sidebar-actions">
+          <button className="ghost-btn skills-entry" onClick={() => setSkillsOpen(true)}>
+            技能
+          </button>
+          <button className="ghost-btn skills-entry" onClick={() => setDreamOpen(true)}>
+            Dream
+          </button>
+        </div>
+        <form className="session-jump" onSubmit={(event) => void jumpToSession(event)}>
           <label htmlFor="session-jump-input">跳转会话</label>
           <div className="session-jump-row">
             <input
@@ -272,69 +395,75 @@ export function AgentApp() {
           {jumpHint ? <p className="jump-hint">{jumpHint}</p> : null}
         </form>
         <div className="session-list">
-          {sessions.map((session) => (
-            <Link
-              key={session.id}
-              href={sessionPath(session.id)}
-              className={`session-item ${session.id === active.id ? "is-active" : ""}`}
-            >
-              <span>{session.title}</span>
-              {busyIds.includes(session.id) ? <span className="session-busy">处理中</span> : null}
-              <button
-                type="button"
-                className="session-delete"
-                aria-label="删除会话"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  const next = sessions.filter((item) => item.id !== session.id);
-                  deleteSessionMessages(session.id);
-                  disposeSessionChat(session.id);
-                  setBusyIds((current) => current.filter((id) => id !== session.id));
-                  if (next.length === 0) {
-                    const fresh = newSession();
-                    setSessions([fresh]);
-                    saveSessions([fresh], fresh.id);
-                    router.push(sessionPath(fresh.id));
-                    return;
-                  }
-                  setSessions(next);
-                  if (session.id === sessionId) {
-                    saveSessions(next, next[0].id);
-                    router.push(sessionPath(next[0].id));
-                    return;
-                  }
-                  saveSessions(next, sessionId);
-                }}
-              >
-                ×
-              </button>
-            </Link>
-          ))}
+          <div className="session-group-label">公共会话</div>
+          {publicSessions.length === 0 ? <p className="session-empty">还没有公共会话</p> : publicSessions.map(renderSessionLink)}
+          <div className="session-group-label">我的会话</div>
+          {personalSessions.length === 0 ? <p className="session-empty">还没有个人会话</p> : personalSessions.map(renderSessionLink)}
         </div>
         <div className="sidebar-foot">
+          <div>
+            {user ? `已登录 ${user.username}` : ""}
+            <button
+              type="button"
+              className="logout-btn"
+              onClick={() => {
+                void logoutUser().then(() => {
+                  window.location.href = "/login";
+                });
+              }}
+            >
+              退出
+            </button>
+          </div>
           文件写在 <code>workspace/</code>
           <br />
-          技能在 <code>.cursor/skills</code>
+          会话存在 <code>data/ops.sqlite</code>
         </div>
       </aside>
 
       <div className="stage-stack">
+        {accessError && !active ? (
+          <div className="stage-slot is-active">
+            <main className="stage">
+              <div className="empty">
+                <p className="empty-kicker">打不开这个会话</p>
+                <h1>{accessError}</h1>
+                <p>公共会话所有登录用户都能打开；个人会话只有创建者能看。</p>
+                <div className="suggestions">
+                  <button onClick={() => void startSession("personal")}>新建个人任务</button>
+                  <button onClick={() => void startSession("public")}>新建公共任务</button>
+                </div>
+              </div>
+            </main>
+          </div>
+        ) : null}
         {sessions
-          .filter((session) => session.id === active.id || busyIds.includes(session.id))
+          .filter(
+            (session) =>
+              (session.id === active?.id && detailReady) || busyIds.includes(session.id),
+          )
           .map((session) => (
             <div
               key={session.id}
-              className={`stage-slot ${session.id === active.id ? "is-active" : ""}`}
-              aria-hidden={session.id !== active.id}
+              className={`stage-slot ${session.id === active?.id ? "is-active" : ""}`}
+              aria-hidden={session.id !== active?.id}
             >
               <ChatPane
                 session={session}
+                isOwner={user?.id === session.ownerId}
                 copied={copied}
                 onCopyId={() => void copySessionId()}
+                onVisibility={(visibility) => {
+                  void updateSessionVisibility(session.id, visibility).then((updated) => {
+                    setSessions((current) =>
+                      current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+                    );
+                  });
+                }}
                 settingsRef={settingsRef}
                 onSettings={() => setSettingsOpen(true)}
                 onSkills={() => setSkillsOpen(true)}
+                onDream={() => setDreamOpen(true)}
                 onBusyChange={(busy) => {
                   setBusyIds((current) => {
                     const has = current.includes(session.id);
@@ -345,8 +474,8 @@ export function AgentApp() {
                 }}
                 onMessages={(messages) => {
                   if (messages.length === 0) return;
-                  saveSessionMessages(session.id, messages);
                   const title = titleFromMessages(messages);
+                  saveSessionMessages(session.id, messages, title);
                   setSessions((current) => {
                     const item = current.find((entry) => entry.id === session.id);
                     if (!item || (item.messages === messages && item.title === title)) return current;
@@ -370,26 +499,33 @@ export function AgentApp() {
         />
       ) : null}
       {skillsOpen ? <SkillsPanel onClose={() => setSkillsOpen(false)} /> : null}
+      {dreamOpen ? <DreamPanel onClose={() => setDreamOpen(false)} /> : null}
     </div>
   );
 }
 
 function ChatPane({
   session,
+  isOwner,
   copied,
   onCopyId,
+  onVisibility,
   settingsRef,
   onSettings,
   onSkills,
+  onDream,
   onMessages,
   onBusyChange,
 }: {
   session: AgentSession;
+  isOwner: boolean;
   copied: boolean;
   onCopyId: () => void;
+  onVisibility: (visibility: SessionVisibility) => void;
   settingsRef: MutableRefObject<AgentSettings>;
   onSettings: () => void;
   onSkills: () => void;
+  onDream: () => void;
   onMessages: (messages: UIMessage[]) => void;
   onBusyChange: (busy: boolean) => void;
 }) {
@@ -435,6 +571,9 @@ function ChatPane({
         <div>
           <div className="stage-title">{session.title}</div>
           <div className="stage-meta">
+            {session.visibility === "public" ? "公共会话" : "个人会话"}
+            {session.ownerName ? ` · ${session.ownerName}` : ""}
+            {" · "}
             {settingsRef.current.model || "未选择模型"} · {settingsRef.current.preset === "cursor" ? "Cursor 账号" : "外部接口"}
           </div>
           <button type="button" className="session-id" onClick={onCopyId} title="复制 session id">
@@ -443,11 +582,24 @@ function ChatPane({
           </button>
         </div>
         <div className="stage-actions">
+          {isOwner ? (
+            <button
+              className="ghost-btn"
+              onClick={() => onVisibility(session.visibility === "public" ? "personal" : "public")}
+            >
+              {session.visibility === "public" ? "改为个人" : "改为公共"}
+            </button>
+          ) : (
+            <span className="stage-meta">只读</span>
+          )}
           <button className="ghost-btn" onClick={onSettings}>
             设置
           </button>
           <button className="ghost-btn" onClick={onSkills}>
             技能
+          </button>
+          <button className="ghost-btn" onClick={onDream}>
+            Dream
           </button>
         </div>
       </header>
@@ -461,11 +613,13 @@ function ChatPane({
               它不只聊天：会读文件、写代码、打开网页，并在工作区里把事情做完。
             </p>
             <div className="suggestions">
-              {SUGGESTIONS.map((item) => (
-                <button key={item} onClick={() => submit(item)}>
-                  {item}
-                </button>
-              ))}
+              {isOwner
+                ? SUGGESTIONS.map((item) => (
+                    <button key={item} onClick={() => submit(item)}>
+                      {item}
+                    </button>
+                  ))
+                : null}
             </div>
           </div>
         ) : (
@@ -489,35 +643,39 @@ function ChatPane({
         {error ? <div className="error-line">{error.message}</div> : null}
       </div>
 
-      <form
-        className="composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <textarea
-          value={input}
-          rows={1}
-          placeholder="描述任务，或让它先看看工作区…"
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void submit();
-            }
+      {isOwner ? (
+        <form
+          className="composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
           }}
-        />
-        {busy ? (
-          <button type="button" className="send-btn is-stop" onClick={() => stop()}>
-            停止
-          </button>
-        ) : (
-          <button type="submit" className="send-btn" disabled={!input.trim()}>
-            发送
-          </button>
-        )}
-      </form>
+        >
+          <textarea
+            value={input}
+            rows={1}
+            placeholder="描述任务，或让它先看看工作区…"
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+          />
+          {busy ? (
+            <button type="button" className="send-btn is-stop" onClick={() => stop()}>
+              停止
+            </button>
+          ) : (
+            <button type="submit" className="send-btn" disabled={!input.trim()}>
+              发送
+            </button>
+          )}
+        </form>
+      ) : (
+        <div className="composer readonly-composer">这是 {session.ownerName} 的公共会话，你可以看记录，但不能代发。</div>
+      )}
     </main>
   );
 }

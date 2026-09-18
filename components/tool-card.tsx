@@ -29,6 +29,11 @@ const LABELS: Record<string, string> = {
   write_skill: "写入技能",
   create_skill: "新建技能",
   delete_skill: "删除技能",
+  create_skill_group: "新建技能分组",
+  delete_skill_group: "删除技能分组",
+  read_memory: "读取长期记忆",
+  read_dreams: "读取梦境日记",
+  run_dream: "立刻整理记忆",
 };
 
 function toolLabel(name: string) {

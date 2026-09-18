@@ -9,7 +9,9 @@ import {
   workspaceRoot,
   writeWorkspaceFile,
 } from "./workspace";
-import { createSkill, deleteSkill, listSkills, readSkill, writeSkill } from "./skills";
+import { createGroup, createSkill, deleteGroup, deleteSkill, listSkills, readGroups, readSkill, writeSkill } from "./skills";
+import { readDreamDiary, readMemoryMarkdown } from "./memory";
+import { dreamStatus, runDreamCycle } from "./dream";
 
 const execFileAsync = promisify(execFile);
 
@@ -223,48 +225,103 @@ export function createAgentTools() {
       }),
     }),
     list_skills: tool({
-      description: "列出可加载的 Agent Skills（项目技能和个人技能）。",
+      description: "列出可加载的 Agent Skills，按分组（通用 / 告警分析 / 请求调用 / 日志流 等）。",
       inputSchema: z.object({
         unused: z.string().optional(),
       }),
-      execute: async () => ({ skills: await listSkills() }),
+      execute: async () => ({
+        skills: await listSkills(),
+        groups: {
+          project: await readGroups("project"),
+          personal: await readGroups("personal"),
+        },
+      }),
     }),
     read_skill: tool({
       description: "读取一个 Skill 文件，默认 SKILL.md。",
       inputSchema: z.object({
         scope: z.enum(["project", "personal"]).optional(),
+        group: z.string().optional().describe("分组 id，默认 general"),
         name: z.string().describe("技能目录名"),
         file: z.string().optional().describe("文件名，默认 SKILL.md"),
       }),
-      execute: async ({ scope, name, file }) => readSkill(scope || "project", name, file || "SKILL.md"),
+      execute: async ({ scope, group, name, file }) =>
+        readSkill(scope || "project", name, file || "SKILL.md", group || "general"),
     }),
     write_skill: tool({
-      description: "创建或覆盖 Skill 文件。SKILL.md 必须带 name 和 description 的 YAML frontmatter。",
+      description: "创建或覆盖 Skill 文件。SKILL.md 必须带 name、description、group 的 YAML frontmatter。",
       inputSchema: z.object({
         scope: z.enum(["project", "personal"]).optional(),
+        group: z.string().optional(),
         name: z.string(),
         content: z.string(),
         file: z.string().optional(),
       }),
-      execute: async ({ scope, name, content, file }) =>
-        writeSkill(scope || "project", name, content, file || "SKILL.md"),
+      execute: async ({ scope, group, name, content, file }) =>
+        writeSkill(scope || "project", name, content, file || "SKILL.md", group || "general"),
     }),
     create_skill: tool({
-      description: "用模板新建 Skill。",
+      description: "用模板在指定分组新建 Skill。分组例如 general、alert-analysis、request-call、log-stream。",
       inputSchema: z.object({
         scope: z.enum(["project", "personal"]).optional(),
+        group: z.string().optional(),
         name: z.string(),
         description: z.string(),
       }),
-      execute: async ({ scope, name, description }) => createSkill(scope || "project", name, description),
+      execute: async ({ scope, group, name, description }) =>
+        createSkill(scope || "project", name, description, group || "general"),
     }),
     delete_skill: tool({
       description: "删除一个 Skill 目录。",
       inputSchema: z.object({
         scope: z.enum(["project", "personal"]).optional(),
+        group: z.string().optional(),
         name: z.string(),
       }),
-      execute: async ({ scope, name }) => deleteSkill(scope || "project", name),
+      execute: async ({ scope, group, name }) => deleteSkill(scope || "project", name, group || "general"),
+    }),
+    create_skill_group: tool({
+      description: "新建技能分组。",
+      inputSchema: z.object({
+        scope: z.enum(["project", "personal"]).optional(),
+        id: z.string(),
+        title: z.string(),
+        description: z.string().optional(),
+      }),
+      execute: async ({ scope, id, title, description }) =>
+        createGroup(scope || "project", { id, title, description }),
+    }),
+    delete_skill_group: tool({
+      description: "删除空的自定义技能分组。内置分组不能删。",
+      inputSchema: z.object({
+        scope: z.enum(["project", "personal"]).optional(),
+        id: z.string(),
+      }),
+      execute: async ({ scope, id }) => deleteGroup(scope || "project", id),
+    }),
+    read_memory: tool({
+      description: "读取 Dream 深睡沉淀的长期记忆（workspace/.ops/MEMORY.md）。只来自公共会话。",
+      inputSchema: z.object({
+        unused: z.string().optional(),
+      }),
+      execute: async () => ({ markdown: await readMemoryMarkdown() }),
+    }),
+    read_dreams: tool({
+      description: "读取 Dream REM 日记（workspace/.ops/DREAMS.md）。",
+      inputSchema: z.object({
+        unused: z.string().optional(),
+      }),
+      execute: async () => ({ markdown: await readDreamDiary() }),
+    }),
+    run_dream: tool({
+      description: "立刻跑一轮 Dream：浅睡筛公共会话 → REM 写日记 → 深睡写入 MEMORY.md。",
+      inputSchema: z.object({
+        unused: z.string().optional(),
+      }),
+      execute: async () => {
+        const run = await runDreamCycle("manual");
+        return { run, status: await dreamStatus() };
+      },
     }),
   };
 }

@@ -1,0 +1,8 @@
+{
+  "groups": [
+    { "id": "general", "title": "通用", "description": "默认分组，放跨场景技能" },
+    { "id": "alert-analysis", "title": "告警分析", "description": "告警归并、降噪、根因初判" },
+    { "id": "request-call", "title": "请求调用", "description": "HTTP/RPC 排查、重试、调用约定" },
+    { "id": "log-stream", "title": "日志流", "description": "日志检索、关联、异常流分析" }
+  ]
+}

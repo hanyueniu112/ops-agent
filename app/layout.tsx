@@ -22,7 +22,7 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "OPS大脑",
-  description: "本机 Web Agent，能读写文件、管理技能、检索网页并执行命令。",
+  description: "本机 Web Agent，能读写文件、管理技能分组、Dream 记忆整理、检索网页并执行命令。",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
